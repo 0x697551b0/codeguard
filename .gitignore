@@ -1,0 +1,62 @@
+# ---- Python ----
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+dist/
+*.egg-info/
+.eggs/
+pip-wheel-metadata/
+
+# ---- 虚拟环境 ----
+.venv/
+venv/
+env/
+ENV/
+
+# ---- 测试 / 覆盖率 ----
+.pytest_cache/
+.coverage
+htmlcov/
+.tox/
+.mypy_cache/
+.ruff_cache/
+
+# ---- 密钥与本机配置（绝不提交）----
+.env
+.env.*
+!.env.example
+*.key
+secrets.json
+
+# ---- 测试与运行产物 ----
+.codeguard_tmp/
+.testtmp/
+reports/
+report.json
+report.md
+*.trajectory.jsonl
+testout.txt
+
+# 测试运行器在受限沙箱下无法清理的临时目录（权限被拒绝时会残留在根目录）
+# 它们只包含测试用的临时工作区，与本项目源码无关。
+agent_*/
+tools_*/
+report_*/
+dotenv_*/
+dotenv2_*/
+cg_*/
+chk_*/
+
+# ---- 编辑器 / 系统 ----
+.idea/
+.vscode/
+*.swp
+.DS_Store
+Thumbs.db
+
+# ---- 作业交付物（本地打包，不入库）----
+*.rar
+*.zip

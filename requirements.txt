@@ -1,0 +1,12 @@
+# CodeGuard 运行依赖
+#
+# 本项目刻意把依赖压到最少：核心功能只需要 httpx 一个第三方库。
+# 静态分析、CLI、报告渲染、测试运行器全部基于 Python 标准库实现。
+#
+# 安装：
+#     pip install -r requirements.txt
+#
+# 开发（可选，用于 pytest 方式运行测试；也可直接用 python run_tests.py）：
+#     pip install -r requirements.txt pytest
+
+httpx>=0.27,<1.0
