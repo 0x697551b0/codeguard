@@ -1,26 +1,14 @@
-"""Prompt 设计（对应作业“Prompt 设计”要求）。
-
-分工：
-    * :func:`system_prompt` —— 定义 Agent 的角色、工作流、工具使用纪律与输出规范；
-    * :func:`build_review_request` —— 把用户诉求渲染成首轮 user 消息；
-    * :func:`continuation_hint` —— 迭代过程中注入的阶段性提示（Context Engineering）。
-
-设计要点（可写进 Design.md）：
-    1. **角色 + 目标 + 约束三段式**：先立人设，再给可执行流程，最后给硬性红线。
-    2. **强制先取事实再下结论**：要求先调 ``run_static_analysis``，抑制幻觉。
-    3. **抑制常见 LLM 审查噪声**：显式禁止“加类型注解”“加测试”这类万能建议；
-       要求每条问题必须给出文件:行号与原文证据，否则不许写。
-    4. **少即是多**：只允许保留确有把握的问题，宁缺毋滥；不确定的放进 open_questions。
-    5. **终止条件显式化**：明确“调用 submit_review 即结束”，避免模型无限试探。
+"""
+Prompt 设计。system_prompt 定义角色/流程/纪律；build_review_request 渲染首轮消息；continuation_hint 注入阶段提示。
+要点：强制先调 run_static_analysis 抑制幻觉；禁止「加类型注解/加测试」这类万能建议；
+每条问题必须给出文件:行号与原文证据；最多 15 条 findings；明确「调用 submit_review 即结束」。
 """
 
 from __future__ import annotations
 
 from typing import Sequence
 
-# --------------------------------------------------------------------------- #
 # System Prompt
-# --------------------------------------------------------------------------- #
 _SYSTEM_ZH = """\
 你是 CodeGuard，一名严谨、务实的高级代码审查工程师（Senior Code Reviewer），
 服务对象是需要高质量评审意见的开发团队。你拥有工具，可以主动查看代码库而不是凭空猜测。
@@ -97,9 +85,7 @@ def system_prompt(lang: str = "zh") -> str:
     return _SYSTEM_EN if str(lang).lower().startswith("en") else _SYSTEM_ZH
 
 
-# --------------------------------------------------------------------------- #
 # 首轮用户消息
-# --------------------------------------------------------------------------- #
 _REVIEW_TEMPLATE_ZH = """\
 请对以下目标执行代码审查。
 
@@ -149,15 +135,7 @@ def build_review_request(
     file_list: Sequence[str] | None = None,
     lang: str = "zh",
 ) -> str:
-    """渲染首轮 user 消息。
-
-    Args:
-        target: 被审查路径（展示用）。
-        focus: 用户额外关注点，例如 ``["并发安全", "SQL 注入"]``。
-        target_kind: ``'文件'`` / ``'目录'`` / ``'代码片段'``。
-        file_list: 目录审查时预先探测到的文件清单，减少模型盲探。
-        lang: 输出语言。
-    """
+    """渲染首轮 user 消息。file_list 为预扫描的文件清单（减少模型盲探），target_kind 为 文件/目录/代码片段。"""
     focus_items = [item.strip() for item in (focus or []) if item and item.strip()]
     is_en = str(lang).lower().startswith("en")
 
@@ -190,9 +168,7 @@ def build_review_request(
     )
 
 
-# --------------------------------------------------------------------------- #
 # 迭代中的动态提示
-# --------------------------------------------------------------------------- #
 _CONTINUATION_HINTS_ZH = {
     "no_tool_used": (
         "你还没有调用任何工具。请先调用 `run_static_analysis` 获取客观事实，"
@@ -229,9 +205,7 @@ def continuation_hint(kind: str, *, lang: str = "zh") -> str:
     return _CONTINUATION_HINTS_ZH.get(kind, "")
 
 
-# --------------------------------------------------------------------------- #
 # 交互式追问
-# --------------------------------------------------------------------------- #
 _FOLLOWUP_ZH = """\
 以下是本次审查已提交的报告摘要，请基于它回答用户的新问题。
 如果需要更多代码细节，可以继续调用读取类工具。

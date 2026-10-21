@@ -1,21 +1,8 @@
-"""内置静态分析器（纯标准库 ``ast``，零依赖、零网络）。
+"""
+内置静态分析器（纯标准库 ast，零依赖零网络）。
 
-设计定位：
-    这是 Agent 的**确定性事实来源**。LLM 容易漏看、幻觉或前后不一致，
-    因此 Agent 的第一步总是先跑这一层，拿到客观命中清单，再让模型
-    结合上下文做语义判断并给出修复建议。二者互补：
-        * 静态分析 → 客观、可复现、可回归测试，但不懂业务语义；
-        * LLM 审查 → 懂语义与意图，但需要事实锚点。
-
-规则编号约定：
-    ====== ============================== ==========
-    编号    类别                            默认级别
-    ====== ============================== ==========
-    CG1xx  安全（Security）                critical/high
-    CG2xx  可靠性（Reliability）           high/medium
-    CG3xx  可维护性（Maintainability）     medium/low
-    CG4xx  风格与规范（Style）             low/info
-    ====== ============================== ==========
+这是 Agent 的确定性事实来源：LLM 容易漏看或幻觉，所以先跑这一层拿客观命中清单，
+再让模型结合上下文做语义判断。规则编号：CG1xx 安全、CG2xx 可靠性、CG3xx 可维护性、CG4xx 风格。
 """
 
 from __future__ import annotations
@@ -29,9 +16,7 @@ from typing import Iterable, Iterator, Sequence
 
 from codeguard.models import Finding, SEVERITY_ORDER, Severity
 
-# --------------------------------------------------------------------------- #
 # 常量表
-# --------------------------------------------------------------------------- #
 #: ``eval``/``exec`` 一类会把字符串当代码执行的函数
 DANGEROUS_CALLS: dict[str, tuple[Severity, str]] = {
     "eval": (Severity.CRITICAL, "任意代码执行"),
@@ -105,9 +90,7 @@ MAX_FUNCTION_PARAMS = 6
 MAX_LINE_LENGTH = 120
 
 
-# --------------------------------------------------------------------------- #
 # 规则元数据
-# --------------------------------------------------------------------------- #
 @dataclass(frozen=True)
 class Rule:
     """一条静态规则的元数据（用于文档生成与报告呈现）。"""
@@ -180,9 +163,7 @@ SQL_KEYWORDS = (
 SQL_VARIABLE_NAME_HINTS = ("sql", "query", "stmt", "statement", "select", "insert", "update", "delete")
 
 
-# --------------------------------------------------------------------------- #
 # 分析结果
-# --------------------------------------------------------------------------- #
 @dataclass
 class FileAnalysis:
     """单个文件的静态分析结果。"""
@@ -242,22 +223,15 @@ class AnalysisSummary:
         }
 
 
-# --------------------------------------------------------------------------- #
 # 主体分析器
-# --------------------------------------------------------------------------- #
 class CodeAnalyzer:
     """把 Python 源码字符串解析为一条条 :class:`Finding`。"""
 
     def __init__(self, *, rules: Sequence[str] | None = None, max_findings_per_file: int = 200) -> None:
-        """
-        Args:
-            rules: 只启用这些规则 ID；``None`` 表示全部启用。
-            max_findings_per_file: 单文件最多保留的条目数，防止大文件刷屏。
-        """
+        """rules 为 None 表示启用全部规则；max_findings_per_file 限制单文件条目数以防刷屏。"""
         self.enabled = set(rules) if rules else {r.rule_id for r in RULES}
         self.max_findings_per_file = max_findings_per_file
 
-    # ------------------------------------------------------------------ #
     def analyze_source(self, source: str, *, path: str = "<string>") -> FileAnalysis:
         """分析源码字符串。"""
         result = FileAnalysis(path=path)
@@ -317,7 +291,6 @@ class CodeAnalyzer:
         result.findings = findings
         return result
 
-    # ------------------------------------------------------------------ #
     def analyze_file(self, path: str | Path) -> FileAnalysis:
         """分析单个文件（自动处理编码与超大文件）。"""
         file_path = Path(path)
@@ -350,16 +323,9 @@ class CodeAnalyzer:
             summary.skipped.append(f"{target}：未找到 .py 文件")
         return summary
 
-    # ------------------------------------------------------------------ #
     # 跨语句检查
-    # ------------------------------------------------------------------ #
     def _check_unused_imports(self, tree: ast.AST, path: str, lines: list[str], collector: "_FindingCollector") -> None:
-        """CG403：导入但未使用的名称。
-
-        只对 AST 做**一次**遍历，同时收集"导入了什么"与"引用了什么"。
-        早期版本分三次 ``ast.walk`` 分别收集导入、标识符、字符串，虽然结果
-        相同，但三次遍历既慢又让代码嵌套更深 —— 一次遍历更简单也更高效。
-        """
+        """CG403：导入但未使用的名称。只做一次 AST 遍历，同时收集导入与引用（早期版本分三次遍历，慢且嵌套更深）。"""
         if "CG403" not in self.enabled:
             return
 
@@ -448,11 +414,7 @@ class CodeAnalyzer:
 
 
 class _ImportUsageScan:
-    """一次 AST 遍历内同时收集"导入了什么"与"引用了什么"。
-
-    单独成类（而非嵌在遍历循环里）是为了把导入/引用的判定规则集中在一处，
-    新增"哪种写法算作使用"时只需改这里。
-    """
+    """一次遍历内同时收集导入与引用。单独成类是为了把判定规则集中在一处。"""
 
     def __init__(self) -> None:
         #: 导入名 → 行号
@@ -512,7 +474,6 @@ class _FindingCollector(ast.NodeVisitor):
         #: 已产出发现的身份集合，用于去重
         self._seen: set[tuple[str, int | None, str]] = set()
 
-    # ------------------------------------------------------------------ #
     def enabled_rule(self, rule_id: str) -> bool:
         return rule_id in self.enabled
 
@@ -562,9 +523,7 @@ class _FindingCollector(ast.NodeVisitor):
     def context(self) -> str:
         return f"（在 {self._function_stack[-1]} 中）" if self._function_stack else ""
 
-    # ------------------------------------------------------------------ #
     # 函数级检查
-    # ------------------------------------------------------------------ #
     def visit_FunctionDef(self, node: ast.FunctionDef) -> None:
         self._check_function(node)
 
@@ -572,11 +531,7 @@ class _FindingCollector(ast.NodeVisitor):
         self._check_function(node)
 
     def _check_function(self, node: ast.FunctionDef | ast.AsyncFunctionDef) -> None:
-        """对函数定义执行全部函数级规则。
-
-        每条规则抽成独立的 ``_check_*`` 方法：新增规则只需加一行调用，
-        也便于按规则单独测试与调整阈值。
-        """
+        """对函数定义执行全部函数级规则。每条规则抽成独立 _check_* 方法，便于单独调整阈值与测试。"""
         self._function_stack.append(node.name)
         try:
             self._check_mutable_defaults(node)
@@ -676,9 +631,7 @@ class _FindingCollector(ast.NodeVisitor):
             suggestion="补充 `-> ReturnType`，必要时使用 `typing.Optional` / `|` 联合类型。",
         )
 
-    # ------------------------------------------------------------------ #
     # 调用级检查
-    # ------------------------------------------------------------------ #
     def visit_Call(self, node: ast.Call) -> None:
         dotted = _dotted_name(node.func)
         short = dotted.rsplit(".", 1)[-1] if dotted else ""
@@ -790,14 +743,9 @@ class _FindingCollector(ast.NodeVisitor):
                 )
 
     def _check_sql_injection(self, node: ast.Call, dotted: str) -> None:
-        """CG106：SQL 语句由拼接/格式化/变量间接传参构造。
-
-        覆盖三种常见写法：
-
-        1. 直接内联插值：``cursor.execute(f"... {uid}")``
-        2. 变量间接传参：``sql = "SELECT ... % (email,)"; cursor.execute(sql)``
-           —— 这是真实代码里最常见的形式，只看参数表达式会整个漏掉；
-        3. 字面量占位符未参数化：``execute("... WHERE id = %s")``（只传了 1 个参数）
+        """
+        CG106：SQL 由拼接/格式化/变量间接传参构造。
+        覆盖三种写法：内联插值、变量间接传参（sql=... 后 execute(sql)，真实代码最常见）、字面量占位符未参数化。
         """
         short = dotted.rsplit(".", 1)[-1].lower() if dotted else ""
         if short not in SQL_CALLER_NAMES or not node.args:
@@ -840,11 +788,7 @@ class _FindingCollector(ast.NodeVisitor):
             )
 
     def _report_sql_variable(self, node: ast.Call, variable: str) -> None:
-        """②分支的补充：报告"SQL 变量被直接执行"。
-
-        ``origin`` 为该变量的定义行号：正数表示确实由拼接构造（HIGH），
-        ``0`` 表示只是"像 SQL"的字面量（MEDIUM，需人工确认）。
-        """
+        """报告「SQL 变量被直接执行」。origin 为定义行号：正数 = 确由拼接构造（HIGH），0 = 仅像 SQL 的字面量（MEDIUM 待确认）。"""
         origin = self._sql_like_variables.get(variable)
         if origin is None:
             return
@@ -944,9 +888,7 @@ class _FindingCollector(ast.NodeVisitor):
     def visit_AsyncWith(self, node: ast.AsyncWith) -> None:
         self.visit_With(node)  # type: ignore[arg-type]
 
-    # ------------------------------------------------------------------ #
     # 语句级检查
-    # ------------------------------------------------------------------ #
     def visit_ExceptHandler(self, node: ast.ExceptHandler) -> None:
         line_text = self.snippet(node.lineno)
         # CG201 裸 except
@@ -1024,20 +966,11 @@ class _FindingCollector(ast.NodeVisitor):
         self._check_shadowed_builtin(node)
         self.generic_visit(node)
 
-    # ------------------------------------------------------------------ #
     # 预扫描
-    # ------------------------------------------------------------------ #
     def precollect_sql_variables(self, tree: ast.AST) -> None:
-        """预扫描"像 SQL 的变量"，供 CG106 在 ``execute(变量)`` 处判定。
-
-        为什么需要预扫描：``visit_Call``（调用点）可能在 ``visit_Assign``（定义点）
-        之前被访问到（例如赋值语句自身包含调用）。与其维护复杂的状态机，
-        不如先一次性收集全部定义，再做单次遍历 —— 实现更简单也更可靠。
-
-        记录两种信号：
-            * 值为字符串插值（f-string / % / + / .format）且静态片段像 SQL
-              → 记为定义行号（明确是拼接而成）；
-            * 值只是含 SQL 关键字的字面量 → 记为 ``0``（存在但未拼接，列为待确认）。
+        """
+        预扫描「像 SQL 的变量」，供 CG106 在 execute(变量) 处判定。
+        必须先扫：visit_Call（调用点）可能早于 visit_Assign（定义点）被访问。记为定义行号 = 确为拼接，记为 0 = 待确认。
         """
         if "CG106" not in self.enabled:
             return
@@ -1137,9 +1070,7 @@ class _FindingCollector(ast.NodeVisitor):
         self.generic_visit(node)
 
 
-# --------------------------------------------------------------------------- #
 # 辅助函数
-# --------------------------------------------------------------------------- #
 def _dotted_name(node: ast.AST | None) -> str:
     """把 ``a.b.c`` 形式的属性链还原成点号字符串。"""
     if node is None:
@@ -1217,23 +1148,11 @@ def _static_string_parts(node: ast.AST) -> str:
 
 
 def _max_control_depth(node: ast.AST, depth: int = 0) -> int:
-    """计算函数体内控制流的最大嵌套深度。
-
-    计数规则（刻意区分"分支"与"嵌套"）：
-
-    * 循环（``for`` / ``while``）、``with``、``try`` —— 每层 +1，
-      它们的函数体是真正内嵌的执行上下文；
-    * ``if`` / ``match`` —— **一整条 ``if/elif/else`` 链只计 1 层**。
-
-    为什么 ``if`` 链要特殊处理：Python 把 ``elif`` 解析成嵌套的
-    ``ast.If``（位于父节点的 ``orelse`` 中）。若逐层 +1，一个"按类型分发"
-    的扁平函数（十几个 ``elif``）会被算出十几层深度，报出毫无意义的
-    "嵌套过深"。真正降低可读性的是**复合嵌套**（循环里套条件、条件里再套
-    循环），而不是长的分支链。
-
-    实现要点：``ast.iter_child_nodes`` 会把 ``body``/``orelse`` 这类
-    **语句列表**当作一个子节点返回，而列表本身没有类型信息，因此必须
-    显式下钻各字段，否则递归会停在第一层。
+    """
+    计算函数体内控制流的最大嵌套深度。
+    循环 / with / try 每层 +1；一整条 if/elif/else 链只计 1 层 —— Python 把 elif 解析成嵌套的
+    ast.If，若逐层计数会让「按类型分发的扁平函数」被误判为嵌套过深。
+    实现上必须显式下钻 body/orelse 等字段，因为 ast.iter_child_nodes 会把语句列表当作单个子节点。
     """
     best = depth
     # 语句列表字段：body / orelse / finalbody / handlers
@@ -1335,13 +1254,7 @@ def rules_table() -> list[dict[str, str]]:
 
 
 def relativize_findings(findings: Sequence[Finding], root: str | Path) -> list[Finding]:
-    """把发现中的文件路径改写为相对 ``root`` 的形式。
-
-    报告里统一使用相对路径的好处：可跨机器阅读、不泄露本机目录结构、
-    同一份代码在不同环境下的报告可直接 diff 比较。
-
-    路径已在 ``root`` 之外的条目保持原样（此时绝对路径才是有效信息）。
-    """
+    """把发现中的文件路径改写为相对 root 的形式（报告可跨机器阅读、不泄露本机目录结构）；root 之外的保持原样。"""
     base = Path(root).resolve()
     normalized: list[Finding] = []
     for finding in findings:

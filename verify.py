@@ -1,19 +1,8 @@
-"""端到端自检脚本：一条命令验证整个项目是否真的能跑。
+"""
+端到端自检：一条命令验证整个项目能否跑通。用法：python verify.py
 
-用法::
-
-    python verify.py
-
-检查项（全部离线，不访问网络、不需要 API Key）：
-    1. 包可以正常导入，版本信息可读
-    2. 所有模块通过 ``compileall`` 语法编译检查
-    3. 内置静态规则引擎能识别示例代码中的缺陷
-    4. 7 个工具都能被调用并返回预期结构
-    5. Agent 闭环（mock 模型）能跑通并产出结构化报告
-    6. CLI 各子命令的退出码符合约定
-    7. Markdown / JSON / 文本三种报告渲染都可用
-
-任何一项失败都会以非零退出码结束，适合作为提交前的自检或 CI 门禁。
+10 项检查全部离线（不访问网络、不需要 API Key）：包导入、语法编译、规则引擎识别缺陷、规范代码无误报、
+7 个工具可用、Agent 闭环产出报告、三种报告渲染、报告路径规范、CLI 退出码、测试套件。任一项失败返回非零。
 """
 
 from __future__ import annotations
@@ -64,6 +53,19 @@ def run_cli(*args: str) -> tuple[int, str]:
         errors="replace",
     )
     return process.returncode, (process.stdout or "") + (process.stderr or "")
+
+
+def run_cli_stdout(*args: str) -> tuple[int, str]:
+    """只返回 stdout —— 用于校验 --json 的输出是否纯净。"""
+    process = subprocess.run(
+        [sys.executable, "-m", "codeguard", *args],
+        cwd=str(ROOT),
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+    )
+    return process.returncode, process.stdout or ""
 
 
 print("CodeGuard 端到端自检")
@@ -229,8 +231,26 @@ def _cli_check() -> str:
 
     code, output = run_cli("review", DEMO, "--mock", "--quiet", "--json")
     assert code in (0, 1), f"review --mock 退出码异常：{code}\n{output[:500]}"
-    payload = json.loads(output.strip().splitlines()[-1] if False else output[output.index("{") :])
+    payload = json.loads(output[output.index("{") :])
     assert payload["summary"], "review 输出缺少 summary"
+
+    # --json 的 stdout 必须是**纯 JSON**：横幅/目标/耗时等过程信息应走 stderr。
+    # 回归：早期版本把「扫描目标：…」也打进 stdout，导致 `| jq` 直接解析失败。
+    for command in (("scan", DEMO, "--json"), ("review", DEMO, "--mock", "--json")):
+        code, stdout = run_cli_stdout(*command)
+        assert stdout.lstrip().startswith("{"), (
+            f"{command[0]} --json 的 stdout 不是以 '{{' 开头：{stdout[:120]!r}"
+        )
+        parsed = json.loads(stdout)  # 解析失败即视为污染
+        assert parsed.get("counts"), f"{command[0]} --json 缺少 counts 字段"
+
+    # --rules 必须真正生效（回归：曾只被解析、从不传给分析引擎）
+    code, stdout = run_cli_stdout("scan", DEMO, "--json", "--rules", "CG101")
+    only_cg101 = {f["rule_id"] for f in json.loads(stdout)["findings"]}
+    assert only_cg101 == {"CG101"}, f"--rules CG101 未生效，实际命中：{sorted(only_cg101)}"
+
+    code, output = run_cli("scan", DEMO, "--rules", "CG999")
+    assert code == 2, f"未知规则应返回用法错误码 2，实际 {code}"
 
     code, output = run_cli("rules")
     assert code == 0 and "CG101" in output

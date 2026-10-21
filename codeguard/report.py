@@ -1,11 +1,6 @@
-"""报告渲染：把 :class:`~codeguard.models.ReviewReport` 输出为 Markdown / 纯文本 / JSON。
-
-设计考虑：
-    * **单一实现**：CLI、交互式会话、CI 都用同一套渲染，保证任何入口看到的报告一致。
-    * **可粘贴**：Markdown 输出可直接贴到 GitHub PR 评论或作业文档里。
-    * **可机读**：JSON 输出保留全部字段，便于接入流水线或做二次统计。
-    * **区分来源**：每条问题标注 ``static``（规则引擎）还是 ``llm``（语义分析），
-      让读者知道结论的可信度来源。
+"""
+报告渲染：把 ReviewReport 输出为 Markdown / 纯文本 / JSON。
+CLI、交互会话、CI 共用同一套渲染；每条问题标注 static（规则引擎）或 llm（语义分析）以标明结论来源。
 """
 
 from __future__ import annotations
@@ -39,15 +34,9 @@ _RISK_ICON = {
 _SOURCE_LABEL = {"static": "规则引擎", "llm": "语义分析"}
 
 
-# --------------------------------------------------------------------------- #
 # Markdown
-# --------------------------------------------------------------------------- #
 def render_markdown(report: ReviewReport, *, title: str = "CodeGuard 代码审查报告", include_rules_appendix: bool = False) -> str:
-    """渲染为 Markdown。
-
-    按章节拆成若干小函数：每个函数只负责一个标题段落，便于单独调整
-    （例如只想改运行指标表格时不必翻一整个大函数）。
-    """
+    """渲染为 Markdown。按章节拆成 _md_overview / _md_findings / _md_appendix 等小函数，便于单独调整。"""
     lines: list[str] = []
     lines.append(f"# {title}")
     lines.append("")
@@ -182,17 +171,11 @@ def _render_rules_appendix() -> list[str]:
     return lines
 
 
-# --------------------------------------------------------------------------- #
 # 终端文本（无 Markdown 依赖的降级渲染）
-# --------------------------------------------------------------------------- #
 def render_text(report: ReviewReport, *, min_severity: str = "info") -> str:
-    """渲染为彩色终端文本（Markdown 的简版）。
-
-    Args:
-        report: 审查报告。
-        min_severity: 只显示不低于该级别的条目（``critical``~``info``）。
-            大项目里 low/info 条目可能很多，默认全显示；用
-            ``--min-severity medium`` 可以让终端输出聚焦在真正要修的问题上。
+    """
+    渲染为彩色终端文本。
+    min_severity 只显示不低于该级别的条目（low/info 过多时用 --min-severity medium 聚焦重点）。
     """
     visible, hidden = _filter_by_severity(report, min_severity)
     counts = report.counts_by_severity
@@ -244,11 +227,7 @@ _SEVERITY_RANK = {"critical": 0, "high": 1, "medium": 2, "low": 3, "info": 4}
 
 
 def _filter_by_severity(report: ReviewReport, min_severity: str) -> tuple[list[Finding], int]:
-    """按 ``min_severity`` 过滤显示条目。
-
-    Returns:
-        ``(可见条目, 被隐藏的条目数)``
-    """
+    """按 min_severity 过滤显示条目，返回 (可见条目, 被隐藏的条目数)。"""
     threshold = _SEVERITY_RANK.get(str(min_severity).lower(), 4)
     visible = [
         finding
@@ -335,24 +314,14 @@ def _is_wide(char: str) -> bool:
     )
 
 
-# --------------------------------------------------------------------------- #
 # JSON / SARIF 风格的结构化输出
-# --------------------------------------------------------------------------- #
 def render_json(report: ReviewReport, *, indent: int = 2) -> str:
     """渲染为 JSON（UTF-8 原样保留中文）。"""
     return json.dumps(report.to_dict(), ensure_ascii=False, indent=indent)
 
 
 def render_ci_summary(report: ReviewReport, *, fail_on: str = "high") -> tuple[bool, str]:
-    """生成 CI 质量门禁结论。
-
-    Args:
-        report: 审查报告。
-        fail_on: 达到或超过该级别即判定失败（``critical``/``high``/``medium``/``low``/``none``）。
-
-    Returns:
-        ``(是否通过, 一行结论)``
-    """
+    """生成 CI 质量门禁结论，返回 (是否通过, 一行结论)。fail_on 为 none 时关闭门禁。"""
     order = {"critical": 0, "high": 1, "medium": 2, "low": 3, "info": 4}
     key = fail_on.strip().lower()
     if key in {"none", "off", "false", "disabled"}:
@@ -376,11 +345,7 @@ def write_report(
     include_rules_appendix: bool = False,
     min_severity: str = "info",
 ) -> str:
-    """把报告写入文件，返回实际写入的路径。自动根据扩展名推断格式。
-
-    ``min_severity`` 只影响 txt 格式的**展示**；Markdown 与 JSON 始终写全量，
-    避免"写入文件时丢失信息"这种反直觉行为。
-    """
+    """把报告写入文件并按扩展名推断格式。min_severity 只影响 txt 展示，Markdown/JSON 始终写全量。"""
     from pathlib import Path
 
     file_path = Path(path)

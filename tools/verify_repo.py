@@ -1,28 +1,10 @@
-"""校验 ``tools/init_repo.py`` 生成的 Git 仓库是否**真的可用**。
+"""
+校验 tools/init_repo.py 生成的 Git 仓库是否真的可用，分两层。
 
-校验分两层：
-
-**第一层（无需安装 Git）** —— 用标准库直接解码 ``.git`` 里的对象
-（zlib 解压 + 解析二进制 tree 条目 + 核对 SHA-1），验证：
-    1. ``.git`` 结构与必需文件是否齐全；
-    2. 每个对象能否解压，且内容哈希与路径名一致（对象完整未损坏）；
-    3. HEAD 指向的分支与 reflog 是否存在且格式正确；
-    4. 从 commit 的 tree 出发能否遍历出完整文件清单；
-    5. 索引文件头是否合法、条目数是否与 tree 一致。
-
-**第二层（若本机有 Git）** —— 调用真实 Git 做权威验证：
-    ``git status``（工作区必须干净）、``git fsck --strict``（对象必须无错）、
-    ``git rev-parse HEAD``（SHA 必须与本脚本读到的引用一致）。
-
-第二层是必要的：本项目的索引格式曾经"自研解析器读得通、真实 Git 读不通"——
-自解析器与写入器共享同一个错误假设，属于典型的自证正确。只有引入独立实现
-（真实 Git）才能发现这类问题。
-
-用法::
-
-    python tools/verify_repo.py
-
-任何一项失败都以非零退出码结束。
+第一层（无需 Git）：标准库解码 .git 对象，核对结构齐全、对象 SHA-1 完整、HEAD 与 reflog 格式、tree 可遍历、索引头合法。
+第二层（若本机有 Git）：git status 工作区干净、git fsck --strict 无错、git rev-parse 与引用一致、
+git ls-files 权限正确。第二层不可省 —— 自研解析器与写入器共享错误假设，必须引入独立实现才能发现问题。
+用法：python tools/verify_repo.py（任一项失败返回非零退出码）
 """
 
 from __future__ import annotations
@@ -54,9 +36,7 @@ def check(condition: bool, message: str) -> bool:
     return condition
 
 
-# --------------------------------------------------------------------------- #
 # 底层读取
-# --------------------------------------------------------------------------- #
 def read_object(git_dir: Path, sha: str) -> tuple[str, bytes]:
     """按 SHA 读取并解压对象，返回 ``(类型, 内容)``。"""
     path = git_dir / "objects" / sha[:2] / sha[2:]
@@ -108,9 +88,7 @@ def walk_tree(git_dir: Path, sha: str, prefix: str = "") -> list[str]:
     return files
 
 
-# --------------------------------------------------------------------------- #
 # 检查项
-# --------------------------------------------------------------------------- #
 def main() -> int:
     git_dir = REPO_ROOT / ".git"
     print("CodeGuard Git 仓库校验（纯标准库实现，无需安装 Git）")

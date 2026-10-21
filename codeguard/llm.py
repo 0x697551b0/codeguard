@@ -1,15 +1,8 @@
-"""LLM 客户端：基于 ``httpx`` 直接调用 OpenAI 兼容的 ``/chat/completions``。
+"""
+LLM 客户端：用 httpx 直接调用 OpenAI 兼容的 /chat/completions。
 
-选择原生 HTTP 而非官方 SDK 的原因（对应作业“使用 LLM 原生 API”的要求）：
-    1. 依赖最小化 —— 只需 ``httpx``，无版本耦合；
-    2. 协议透明 —— 请求/响应结构完全可见，便于讲解 Agent 设计；
-    3. 服务商可迁移 —— 只要兼容 OpenAI 协议（DeepSeek / 通义 / Moonshot / vLLM 自建），
-       改 ``base_url`` 与 ``model`` 即可，业务代码零改动。
-
-内置能力：
-    * 指数退避 + 抖动的重试，尊重服务端 ``Retry-After``；
-    * 区分可重试（429/5xx/超时/连接失败）与不可重试（401/403/400）；
-    * 工具调用参数 JSON 解析容错（非法 JSON 不抛异常，交由 Agent 回灌模型自愈）。
+用原生 HTTP 而非官方 SDK：只需 httpx、协议透明、换服务商只改 base_url 与 model。
+内置指数退避重试（尊重 Retry-After）、区分可重试(429/5xx/超时)与不可重试(401/403/400)、工具参数 JSON 容错。
 """
 
 from __future__ import annotations
@@ -36,15 +29,9 @@ from codeguard.models import ChatMessage, LLMResponse, TokenUsage, ToolCall
 logger = logging.getLogger(__name__)
 
 
-# --------------------------------------------------------------------------- #
 # 抽象接口
-# --------------------------------------------------------------------------- #
 class BaseLLMClient(ABC):
-    """LLM 客户端接口。
-
-    Agent 只依赖这个接口，因此可以无缝替换成 :class:`MockLLMClient`
-    （离线演示 / 单元测试）或未来任意服务商的实现。
-    """
+    """LLM 客户端接口。Agent 只依赖此抽象，因此可替换为 MockLLMClient 做离线测试。"""
 
     @abstractmethod
     def chat(
@@ -65,9 +52,7 @@ class BaseLLMClient(ABC):
         """释放底层连接等资源。"""
 
 
-# --------------------------------------------------------------------------- #
 # 真实实现
-# --------------------------------------------------------------------------- #
 class LLMClient(BaseLLMClient):
     """OpenAI 兼容协议的同步 LLM 客户端。"""
 
@@ -84,7 +69,6 @@ class LLMClient(BaseLLMClient):
             follow_redirects=True,
         )
 
-    # ------------------------------------------------------------------ #
     @property
     def model_name(self) -> str:
         return self.config.model
@@ -99,7 +83,6 @@ class LLMClient(BaseLLMClient):
     def __exit__(self, *exc_info: object) -> None:
         self.close()
 
-    # ------------------------------------------------------------------ #
     def chat(
         self,
         messages: Sequence[ChatMessage],
@@ -145,9 +128,7 @@ class LLMClient(BaseLLMClient):
         # 理论不可达：循环内要么 return 要么 raise
         raise last_error or LLMError("LLM 调用失败且未捕获到具体原因")  # pragma: no cover
 
-    # ------------------------------------------------------------------ #
     # 内部工具
-    # ------------------------------------------------------------------ #
     def _backoff_delay(self, attempt: int, error: LLMError) -> float:
         """指数退避 + 全抖动，避免多进程同时重试造成惊群。"""
         if isinstance(error, LLMRateLimitError) and error.retry_after:
@@ -246,23 +227,12 @@ class LLMClient(BaseLLMClient):
         )
 
 
-# --------------------------------------------------------------------------- #
 # 离线脚本化实现
-# --------------------------------------------------------------------------- #
 class MockLLMClient(BaseLLMClient):
-    """离线脚本化 LLM，用于无 API Key 演示与端到端测试。
-
-    它不"理解"代码，而是按预设脚本依次返回工具调用：
-    先做静态分析 → 再读文件 → 最后提交报告。
-    这样 ``--mock`` 模式可以完整跑通 Agent 闭环（推理/工具/观察/收敛），
-    既方便助教无 Key 验证，也让 CI 可以离线跑集成测试。
-
-    最后一个脚本步骤（``submit_review``）比较特殊：它会**读取前面
-    ``run_static_analysis`` 的真实返回结果**，把实际问题填进报告。
-    这样做是刻意的 —— 演示模式产出的报告仍然基于真实分析数据，
-    而不是编造的假结论；``summary`` 字段会明确标注这是 Mock 模式。
-
-    若要体验真实模型的语义理解能力，去掉 ``--mock`` 并配置 API Key 即可。
+    """
+    离线脚本化 LLM，用于无 API Key 演示与端到端测试。按预设脚本依次返回工具调用：静态分析 → 读文件 → 提交报告。
+    最后一步会读取 run_static_analysis 的真实结果填入报告，因此演示报告基于真实分析数据而非编造。
+    要体验真实模型的语义理解，去掉 --mock 并配置 API Key。
     """
 
     #: 提交报告时最多回填多少条问题
@@ -351,14 +321,9 @@ def _populate_report_from_observations(
     target: str,
     toolbox: Any = None,
 ) -> dict[str, Any]:
-    """把 ``run_static_analysis`` 的结果回填进报告参数。
-
-    这是 Mock 模式的"诚实"设计：演示报告里的每条问题都来自真实分析输出，
-    因此与 `scan` 子命令的结论一致、可交叉验证。
-
-    数据来源优先级：
-        1. ``toolbox.tool_state`` —— 完整结构化结果，不受输出长度限制（首选）；
-        2. 对话历史里的工具消息 JSON —— 兜底，可能已被截断。
+    """
+    把 run_static_analysis 的结果回填进报告参数（Mock 模式保证报告基于真实分析输出）。
+    来源优先级：toolbox.tool_state（完整，首选）→ 对话历史里的工具消息 JSON（兜底，可能已截断）。
     """
     findings: list[dict[str, Any]] = []
     counts: dict[str, int] = {}
@@ -483,16 +448,9 @@ def _default_mock_script() -> list[LLMResponse]:
     ]
 
 
-# --------------------------------------------------------------------------- #
 # 辅助函数
-# --------------------------------------------------------------------------- #
 def _safe_json_object(raw: str) -> tuple[dict[str, Any], bool]:
-    """解析工具调用参数。
-
-    Returns:
-        ``(参数字典, 是否解析成功)``。解析失败时返回空字典与 ``False``，
-        由 Agent 把原始字符串作为错误信息回灌给模型（而不是直接崩掉）。
-    """
+    """解析工具调用参数，返回 (参数字典, 是否解析成功)。失败时返回空字典与 False，交由 Agent 回灌模型而非崩溃。"""
     text = (raw or "").strip()
     if not text:
         return {}, True

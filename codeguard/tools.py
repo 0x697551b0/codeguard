@@ -1,15 +1,9 @@
-"""工具层：Agent 与外部世界交互的接口。
+"""
+工具层：Agent 与外部世界交互的接口。
 
-架构说明：
-    * :class:`Tool`           —— 单个工具的定义（元数据 + JSON Schema + 执行体）
-    * :class:`ToolRegistry`   —— 注册表，负责生成 OpenAI function-calling 定义并分发调用
-    * :func:`build_default_registry` —— 组装 CodeGuard 的默认工具集
-
-所有文件类工具都通过 :class:`~codeguard.tools.PathGuard` 做沙箱约束，
-确保 Agent 只能读取授权的目录，避免 ``../../etc/passwd`` 式的越界访问。
-
-工具执行失败一律抛出 :class:`~codeguard.exceptions.ToolError`，由 Agent
-捕获后**作为观察结果回灌给模型**，实现“工具报错 → 模型自我修正”的闭环。
+Tool = 单个工具定义（元数据 + JSON Schema + 执行体）；ToolRegistry = 注册与分发；
+build_default_registry = 组装默认工具集。所有文件工具经 PathGuard 做沙箱约束；
+工具失败一律抛 ToolError，由 Agent 捕获后回灌给模型，实现「报错 → 自我修正」闭环。
 """
 
 from __future__ import annotations
@@ -23,19 +17,12 @@ from codeguard.exceptions import ToolArgumentError, ToolError, ToolNotFoundError
 from codeguard.models import Finding, ReviewReport, Severity
 from codeguard.static_analysis import RULE_INDEX, CodeAnalyzer, rules_table
 
-# --------------------------------------------------------------------------- #
 # 基础抽象
-# --------------------------------------------------------------------------- #
 @dataclass
 class Tool:
-    """一个可供 LLM 调用的工具。
-
-    Attributes:
-        name: 工具名，需符合 ``^[a-zA-Z0-9_-]{1,64}$``，将出现在模型请求中。
-        description: 给模型看的自然语言说明 —— 写得好坏直接决定模型选对工具的概率。
-        parameters: JSON Schema（object 根），描述入参。
-        func: 实际执行函数，接收关键字参数并返回任意可 JSON 序列化的结果。
-        requires_approval: 是否属于有副作用的工具（本项目的审查工具全部只读）。
+    """
+    一个可供 LLM 调用的工具。
+    name 需匹配 ^[a-zA-Z0-9_-]{1,64}$；description 直接决定模型选对工具的概率；parameters 为 object 根 JSON Schema。
     """
 
     name: str
@@ -78,7 +65,6 @@ class ToolRegistry:
         #: 调用计数，用于统计与预算控制
         self.call_counts: dict[str, int] = {}
 
-    # ------------------------------------------------------------------ #
     def register(self, tool: Tool) -> None:
         if not re.fullmatch(r"[a-zA-Z0-9_-]{1,64}", tool.name):
             raise ValueError(f"非法工具名：{tool.name!r}")
@@ -125,17 +111,9 @@ class ToolRegistry:
         return sum(self.call_counts.values())
 
 
-# --------------------------------------------------------------------------- #
 # 路径沙箱
-# --------------------------------------------------------------------------- #
 class PathGuard:
-    """路径安全护栏。
-
-    所有文件工具都必须经由此类解析路径。它保证：
-        * 相对路径基于 ``workspace_root`` 解析（而非进程 cwd，避免语义漂移）；
-        * 解析后（含符号链接）必须仍位于 ``workspace_root`` 之内；
-        * 可通过 ``allowed_roots`` 额外放行若干目录。
-    """
+    """路径安全护栏。相对路径基于 workspace_root（非进程 cwd）；resolve() 后必须仍在根目录内，防符号链接与 ../ 绕过。"""
 
     def __init__(self, workspace_root: str | Path, *, allowed_roots: Sequence[str | Path] = ()) -> None:
         self.root = Path(workspace_root).expanduser().resolve()
@@ -184,9 +162,7 @@ class PathGuard:
             return path.as_posix()
 
 
-# --------------------------------------------------------------------------- #
 # 截断辅助
-# --------------------------------------------------------------------------- #
 def truncate(text: str, limit: int, *, note: str = "…（内容过长，已截断）") -> str:
     """统一的输出截断，避免超长工具结果挤爆上下文窗口。"""
     if limit <= 0 or len(text) <= limit:
@@ -204,17 +180,12 @@ def _json_schema(properties: dict[str, Any], required: Sequence[str] = (), *, ad
     }
 
 
-# --------------------------------------------------------------------------- #
 # 工具箱
-# --------------------------------------------------------------------------- #
 @dataclass
 class Toolbox:
-    """工具注册表 + 侧信道槽位。
-
-    有些工具需要把**结构化结果**交给 Agent，但不能通过返回值传递
-    （``submit_review`` 必须给模型一句简短确认语；``run_static_analysis``
-    的文本结果可能因长度上限被截断，无法再解析回 JSON）。
-    因此这里提供一个显式的内存槽位，让工具把原始数据"放"出来。
+    """
+    工具注册表 + 侧信道槽位。
+    submit_review 必须给模型一句简短确认语、run_static_analysis 的文本可能被截断，因此结构化结果走内存槽位而非返回值。
     """
 
     registry: ToolRegistry
@@ -239,9 +210,7 @@ class Toolbox:
         self.tool_state.clear()
 
 
-# --------------------------------------------------------------------------- #
 # 默认工具集
-# --------------------------------------------------------------------------- #
 def build_default_registry(
     *,
     workspace_root: str | Path,
@@ -250,25 +219,14 @@ def build_default_registry(
     analyzer: CodeAnalyzer | None = None,
     allowed_roots: Sequence[str | Path] = (),
 ) -> Toolbox:
-    """组装 CodeGuard 的默认工具集，返回 :class:`Toolbox`。
-
-    工具清单（覆盖作业要求的“至少一种工具”，这里给出 7 种）：
-        ==================== ==========================================
-        工具                  作用
-        ==================== ==========================================
-        ``list_files``       浏览目录结构、按扩展名过滤
-        ``read_file``        读取文件内容（行号窗口 / 范围切片）
-        ``search_code``      正则搜索（grep），返回 ``file:line`` 命中
-        ``find_files``       glob 查找文件
-        ``run_static_analysis`` 对文件/目录运行内置 AST 规则引擎
-        ``list_rules``       查询规则手册，便于模型解释依据
-        ``submit_review``    提交结构化审查报告并终止循环
-        ==================== ==========================================
+    """
+    组装默认工具集，返回 Toolbox。
+    7 个工具：list_files 列目录、read_file 读文件、search_code 正则搜索、find_files glob 查找、
+    run_static_analysis 跑 AST 规则、list_rules 查规则手册、submit_review 提交报告并终止循环。
     """
     guard = PathGuard(workspace_root, allowed_roots=allowed_roots)
     engine = analyzer or CodeAnalyzer()
 
-    # ------------------------------------------------------------------ #
     # 工具函数定义
     #
     # 下面 7 个函数都是定义在 build_default_registry 内部的闭包，
@@ -277,9 +235,7 @@ def build_default_registry(
     # 随后通过 Tool(...) 把"元数据 + JSON Schema + 执行体"注册进注册表 ——
     # 这种"一处定义、就近注册"的写法让新增工具只需照抄一个块。
     # （因此本函数较长：它是一张工具清单，而不是嵌套逻辑。）
-    # ------------------------------------------------------------------ #
     # 1. list_files：浏览目录结构，掌握项目全貌
-    # ------------------------------------------------------------------ #
     def list_files(
         path: str = ".",
         extension: str = ".py",
@@ -341,17 +297,11 @@ def build_default_registry(
             "truncated": len(files) >= max_entries,
         }
 
-    # ------------------------------------------------------------------ #
     # 2. read_file
-    # ------------------------------------------------------------------ #
     def read_file(path: str, start_line: int = 1, end_line: int = 0, max_bytes: int = 0) -> dict[str, Any]:
-        """读取文件内容，带行号。
-
-        为避免单次工具结果撑爆上下文窗口，这里做**两级限制**：
-            1. 先按行数窗口裁剪（模型可用 start_line/end_line 精确取段）；
-            2. 再按输出字符上限裁剪行数，并在返回值里说明被裁剪的原因。
-        关键点是**不能在 JSON 值中间截断字符串** —— 那样回灌给模型的就是
-        非法 JSON，会引发难以排查的解析问题。
+        """
+        读取文件内容，带行号。两级限制防撑爆上下文：先按行数窗口裁剪，再按输出字符上限裁剪行数。
+        关键：绝不在 JSON 值中间截断字符串，否则回灌给模型的是非法 JSON。
         """
         file_path = guard.resolve(path)
         if file_path.is_dir():
@@ -405,9 +355,7 @@ def build_default_registry(
             result["truncation_note"] = trimmed_reason
         return result
 
-    # ------------------------------------------------------------------ #
     # 3. search_code
-    # ------------------------------------------------------------------ #
     def search_code(
         path: str = ".",
         pattern: str = "",
@@ -482,9 +430,7 @@ def build_default_registry(
             "matches": matches,
         }
 
-    # ------------------------------------------------------------------ #
     # 4. find_files
-    # ------------------------------------------------------------------ #
     def find_files(path: str = ".", pattern: str = "*.py", max_results: int = 100) -> dict[str, Any]:
         """按 glob 模式查找文件。"""
         root = guard.resolve(path)
@@ -506,9 +452,7 @@ def build_default_registry(
                 break
         return {"pattern": pattern, "root": guard.display(root), "count": len(found), "files": found}
 
-    # ------------------------------------------------------------------ #
     # 5. run_static_analysis
-    # ------------------------------------------------------------------ #
     def run_static_analysis(
         path: str = ".",
         rules: Sequence[str] | str | None = None,
@@ -572,9 +516,7 @@ def build_default_registry(
         tool_state["run_static_analysis"] = result
         return result
 
-    # ------------------------------------------------------------------ #
     # 6. list_rules
-    # ------------------------------------------------------------------ #
     def list_rules(category: str = "", rule_id: str = "") -> dict[str, Any]:
         """查询内置规则手册。"""
         table = rules_table()
@@ -595,9 +537,7 @@ def build_default_registry(
             table = [r for r in table if r["category"].lower() == category.strip().lower()]
         return {"count": len(table), "rules": table}
 
-    # ------------------------------------------------------------------ #
     # 7. submit_review（终止工具）
-    # ------------------------------------------------------------------ #
     #: 侧信道槽位：让工具把结构化结果交给 Agent，而不是塞进给模型看的文本里
     submission: dict[str, Any] = {}
     tool_state: dict[str, Any] = {}
@@ -630,7 +570,6 @@ def build_default_registry(
             "message": "报告已收到，审查流程结束。请用一句话向用户总结结论（无需重复报告全文）。",
         }
 
-    # ------------------------------------------------------------------ #
     registry = ToolRegistry()
     registry.register(
         Tool(
@@ -814,9 +753,7 @@ def build_default_registry(
     return Toolbox(registry=registry, submission=submission, tool_state=tool_state)
 
 
-# --------------------------------------------------------------------------- #
 # 辅助函数
-# --------------------------------------------------------------------------- #
 _SEVERITY_RANK = {
     Severity.CRITICAL.value: 0,
     Severity.HIGH.value: 1,

@@ -1,27 +1,8 @@
-"""打包备份提交物。
+"""
+打包备份提交物为「学号姓名.zip」。
 
-作业要求：把代码、文档打包成“学号姓名”的压缩包（<200M），提交到课程平台。
-
-用法::
-
-    python tools/make_backup.py                      # 自动探测姓名
-    python tools/make_backup.py --id 10086 --name 张三
-    python tools/make_backup.py --student "10086张三"   # 直接指定完整文件名
-
-产出::
-
-    <项目根>/dist/10086张三.zip
-
-包内结构（顶层就是项目目录，解压即用）::
-
-    10086张三/
-    ├── README.md / Design.md / requirements.txt / pyproject.toml
-    ├── codeguard/   tests/   examples/   docs/   tools/
-    ├── run_tests.py   verify.py
-    └── 提交说明.md          ← 自动生成，说明如何运行与验收
-
-排除内容：``.git``、``__pycache__``、临时目录、测试残留、虚拟环境、报告产物。
-**不会**打包任何密钥文件（``.env`` 在排除列表中，只保留 ``.env.example``）。
+用法：python tools/make_backup.py --id 学号 --name 姓名（产出 <项目根>/dist/学号姓名.zip，顶层为 学号姓名/，解压即用）。
+排除 .git、__pycache__、临时目录、测试残留与报告产物；不打包任何密钥（.env 在排除列表，仅保留 .env.example）。
 """
 
 from __future__ import annotations

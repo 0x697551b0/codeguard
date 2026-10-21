@@ -1,13 +1,6 @@
-"""配置加载。
-
-优先级（高 → 低）：
-    1. 显式传入的参数 / 命令行参数
-    2. 进程环境变量
-    3. 工作目录下的 ``.env`` 文件
-    4. 代码内默认值
-
-刻意不引入 ``python-dotenv`` 等第三方依赖，用手写的极简 ``.env`` 解析器，
-保证本项目在裸 Python 环境下即可运行（只需 ``httpx``）。
+"""
+配置加载。优先级：显式参数 > 环境变量 > .env 文件 > 代码默认值。
+刻意不引入 python-dotenv，用手写极简 .env 解析器，保证裸 Python 环境即可运行（只需 httpx）。
 """
 
 from __future__ import annotations
@@ -31,13 +24,9 @@ def _parse_bool(raw: str) -> bool:
 
 
 def load_dotenv(path: str | Path = ".env", *, override: bool = False) -> dict[str, str]:
-    """极简 ``.env`` 解析器。
-
-    支持 ``KEY=VALUE``、``#`` 注释、可选 ``export`` 前缀与成对引号。
-    已存在的环境变量默认不被覆盖（``override=True`` 可强制覆盖）。
-
-    Returns:
-        从文件中解析出的键值对（未过滤已存在的环境变量）。
+    """
+    极简 .env 解析器，支持 KEY=VALUE、# 注释、export 前缀与成对引号。
+    返回解析出的键值对；已存在的环境变量默认不覆盖（override=True 可强制覆盖）。
     """
     file_path = Path(path)
     if not file_path.is_file():
@@ -67,10 +56,7 @@ def load_dotenv(path: str | Path = ".env", *, override: bool = False) -> dict[st
 
 @dataclass
 class Config:
-    """Agent 运行期配置。
-
-    字段名到环境变量的映射规则： ``base_url`` → ``CODEGUARD_BASE_URL``。
-    """
+    """Agent 运行期配置。字段名到环境变量的映射：base_url → CODEGUARD_BASE_URL。"""
 
     # ---- LLM ----
     api_key: str = ""
@@ -100,9 +86,7 @@ class Config:
     #: 额外透传给 HTTP 请求的头部
     extra_headers: dict[str, str] = field(default_factory=dict)
 
-    # ------------------------------------------------------------------ #
     # 构造
-    # ------------------------------------------------------------------ #
     @classmethod
     def from_env(cls, dotenv_path: str | Path | None = ".env", **overrides: Any) -> "Config":
         """从 ``.env`` + 环境变量 + 关键字覆盖构造配置。"""
@@ -120,9 +104,7 @@ class Config:
         kwargs.update({k: v for k, v in overrides.items() if v is not None})
         return cls(**kwargs)
 
-    # ------------------------------------------------------------------ #
     # 校验与派生属性
-    # ------------------------------------------------------------------ #
     def validate(self, *, require_api_key: bool = True) -> None:
         """启动前校验配置，尽早暴露问题而不是等第一次网络调用。"""
         if require_api_key and not self.mock and not self.api_key.strip():
@@ -148,13 +130,7 @@ class Config:
 
     @property
     def chat_completions_url(self) -> str:
-        """拼接 ``/chat/completions`` 端点。
-
-        兼容两种常见写法：以服务根地址结尾（``https://api.deepseek.com``、
-        ``https://api.openai.com/v1``）或已带 ``/chat/completions`` 的完整地址。
-        DeepSeek 与 OpenAI 兼容端点均接受 ``{base}/chat/completions``，
-        因此这里只做一次幂等拼接，不做任何服务商特判。
-        """
+        """拼接 /chat/completions 端点。兼容根地址与已带该路径的完整地址，只做幂等拼接，不做服务商特判。"""
         base = self.base_url.rstrip("/")
         if base.endswith("/chat/completions"):
             return base

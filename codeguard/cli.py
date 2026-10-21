@@ -1,22 +1,8 @@
-"""CodeGuard 命令行界面（argparse 实现，零额外依赖）。
+"""
+CodeGuard 命令行界面（argparse，零额外依赖）。
 
-三种模式::
-
-    # 1) LLM 审查（核心功能）
-    python -m codeguard review examples/demo_buggy_code
-
-    # 2) 纯静态审查（无需 API Key，可用作 CI 质量门禁）
-    python -m codeguard scan examples/demo_buggy_code --fail-on high
-
-    # 3) 交互式追问（验证上下文记忆）
-    python -m codeguard chat examples/demo_buggy_code
-
-退出码约定（便于接入 CI）::
-
-    0  成功且通过质量门禁
-    1  审查完成但命中门禁（---fail-on）
-    2  用法错误 / 配置错误
-    3  运行期错误（网络、鉴权等）
+review 用 LLM 审查；scan 只跑静态规则（无需 API Key，可做 CI 门禁）；chat 审查后追问。
+退出码：0 通过门禁 / 1 命中门禁 / 2 用法或配置错误 / 3 运行期错误。
 """
 
 from __future__ import annotations
@@ -78,9 +64,7 @@ _EPILOG = """\
 """
 
 
-# --------------------------------------------------------------------------- #
 # 参数解析
-# --------------------------------------------------------------------------- #
 def build_parser() -> argparse.ArgumentParser:
     """构造 argparse 解析器。"""
     parser = argparse.ArgumentParser(
@@ -170,9 +154,7 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
-# --------------------------------------------------------------------------- #
 # 入口
-# --------------------------------------------------------------------------- #
 def main(argv: Sequence[str] | None = None) -> int:
     """CLI 入口。"""
     # Windows 控制台默认 GBK，含 emoji/表格字符的输出会崩，先切 UTF-8
@@ -214,9 +196,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     return EXIT_USAGE
 
 
-# --------------------------------------------------------------------------- #
 # 各子命令实现
-# --------------------------------------------------------------------------- #
 def _build_config(args: argparse.Namespace, *, require_api_key: bool = True) -> Config:
     """从命令行参数 + 环境变量构造配置。"""
     config = Config.from_env(
@@ -302,17 +282,40 @@ def _cmd_rules(args: argparse.Namespace) -> int:
     return EXIT_OK
 
 
+def _prose_stream(args: argparse.Namespace):
+    """选择"过程信息"的输出流。
+
+    ``--json`` 时 stdout 必须只有纯 JSON（否则 `| jq` 或 `json.load` 会解析失败），
+    因此把横幅、目标、耗时等人类可读信息改走 stderr。
+    """
+    return sys.stderr if getattr(args, "json", False) else sys.stdout
+
+
 def _cmd_scan(args: argparse.Namespace) -> int:
     """纯静态扫描（不调用 LLM）。"""
     config = _build_config(args, require_api_key=False)
     target = _resolve_target(args.target, config)
+    prose = _prose_stream(args)
 
-    report = static_only_review(target, workspace_root=config.workspace_path)
+    # --rules 形如 "CG101,CG106"；解析为空列表时视为不限制。
+    # 未知规则在 CLI 层就报用法错误（退出码 2），而不是让分析跑到一半才发现。
+    rules = [r.strip() for r in args.rules.split(",") if r.strip()] if args.rules else None
+    if rules:
+        from codeguard.static_analysis import RULE_INDEX
+
+        unknown = [r for r in rules if r not in RULE_INDEX]
+        if unknown:
+            raise ConfigError(
+                f"未知规则 ID：{', '.join(unknown)}。"
+                "可用规则见 `python -m codeguard rules`。"
+            )
+
+    report = static_only_review(target, workspace_root=config.workspace_path, rules=rules)
 
     passed, message = render_ci_summary(report, fail_on=args.fail_on)
     if not args.quiet:
-        print(f"扫描目标：{_display_target(target, config.workspace_path)}")
-        print()
+        print(f"扫描目标：{_display_target(target, config.workspace_path)}", file=prose)
+        print(file=prose)
 
     if args.json:
         print(render_json(report))
@@ -322,10 +325,10 @@ def _cmd_scan(args: argparse.Namespace) -> int:
     if args.report:
         path = write_report(report, args.report, include_rules_appendix=args.rules_appendix, min_severity=args.min_severity)
         if not args.quiet:
-            print(f"\n📄 报告已写入：{path}")
+            print(f"\n📄 报告已写入：{path}", file=prose)
 
     if not args.quiet:
-        print(message)
+        print(message, file=prose)
     return EXIT_OK if passed else EXIT_GATE_FAILED
 
 
@@ -336,14 +339,18 @@ def _cmd_review(args: argparse.Namespace) -> int:
     if config.mock:
         config.mock = True
     target = _resolve_target(args.target, config)
+    prose = _prose_stream(args)
 
     if not args.quiet:
-        _banner()
-        print(f"🎯 审查目标：{_display_target(target, config.workspace_path)}")
+        _banner(stream=prose)
+        print(f"🎯 审查目标：{_display_target(target, config.workspace_path)}", file=prose)
         if args.focus:
-            print(f"🔍 关注点　：{'、'.join(args.focus)}")
-        print(f"🤖 模型　　：{config.model if not config.mock else 'mock-scripted-model（离线，不访问网络）'}")
-        print()
+            print(f"🔍 关注点　：{'、'.join(args.focus)}", file=prose)
+        print(
+            f"🤖 模型　　：{config.model if not config.mock else 'mock-scripted-model（离线，不访问网络）'}",
+            file=prose,
+        )
+        print(file=prose)
 
     with CodeReviewAgent(config) as agent:
         if config.mock:
@@ -351,8 +358,8 @@ def _cmd_review(args: argparse.Namespace) -> int:
         result = agent.review(target, focus=args.focus, prescan=not args.no_prescan)
 
     if args.trace and not args.quiet:
-        print(result.render_trace())
-        print()
+        print(result.render_trace(), file=prose)
+        print(file=prose)
 
     if args.json:
         print(render_json(result.report))
@@ -362,11 +369,14 @@ def _cmd_review(args: argparse.Namespace) -> int:
     if args.report:
         path = write_report(result.report, args.report, include_rules_appendix=args.rules_appendix, min_severity=args.min_severity)
         if not args.quiet:
-            print(f"\n📄 报告已写入：{path}")
+            print(f"\n📄 报告已写入：{path}", file=prose)
 
     if not args.quiet:
-        print(f"⏱️  {result.elapsed_seconds:.1f}s | {result.iterations} 轮迭代 | "
-              f"{result.tool_calls} 次工具调用 | {result.usage}")
+        print(
+            f"⏱️  {result.elapsed_seconds:.1f}s | {result.iterations} 轮迭代 | "
+            f"{result.tool_calls} 次工具调用 | {result.usage}",
+            file=prose,
+        )
 
     # 整体风险为 critical/high 时返回 1，方便在 CI 中拦截
     if result.report.overall_risk.lower() in {"critical", "high"}:
@@ -416,14 +426,9 @@ def _cmd_chat(args: argparse.Namespace) -> int:
     return EXIT_OK
 
 
-# --------------------------------------------------------------------------- #
 # 辅助
-# --------------------------------------------------------------------------- #
 def _display_target(raw: str, workspace: Path) -> str:
-    """把审查目标显示为相对工作区的路径。
-
-    报告中统一使用相对路径：更简洁、可跨机器复现、也不会泄露本机目录结构。
-    """
+    """把审查目标显示为相对工作区的路径（更简洁、可跨机器复现、不泄露本机目录结构）。"""
     try:
         return Path(raw).resolve().relative_to(workspace).as_posix()
     except (ValueError, OSError):
@@ -461,11 +466,12 @@ def _setup_logging(*, verbose: bool, quiet: bool) -> None:
     )
 
 
-def _banner() -> None:
-    """打印启动横幅。"""
-    print("╔" + "═" * 60 + "╗")
-    print("║" + f" CodeGuard v{__version__} —— LLM 代码审查 Agent".ljust(59) + "║")
-    print("╚" + "═" * 60 + "╝")
+def _banner(*, stream=None) -> None:
+    """打印启动横幅。stream 默认 sys.stdout；--json 场景传 sys.stderr 以保持 stdout 纯净。"""
+    out = stream or sys.stdout
+    print("╔" + "═" * 60 + "╗", file=out)
+    print("║" + f" CodeGuard v{__version__} —— LLM 代码审查 Agent".ljust(59) + "║", file=out)
+    print("╚" + "═" * 60 + "╝", file=out)
 
 
 def _error(message: str) -> None:

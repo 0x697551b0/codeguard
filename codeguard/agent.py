@@ -1,28 +1,8 @@
-"""Agent 主循环：输入 → 推理 → 工具调用 → 观察 → 输出。
+"""
+Agent 主循环：输入 → 推理 → 工具调用 → 观察 → 输出。
 
-这是本项目的核心。循环体刻意"薄"且显式，把控制流暴露出来而不是藏在框架里，
-便于讲清 Agent 设计模式。
-
-单轮流程::
-
-    ┌─ iteration N ───────────────────────────────────────────────────┐
-    │ 1. 组装消息（system + 历史 + 动态提示）                            │
-    │ 2. 调用 LLM（带工具定义）                                         │
-    │ 3. 解析响应：                                                    │
-    │      ├─ 有 tool_calls → 依次执行工具，把结果作为 role=tool 回灌    │
-    │      └─ 无 tool_calls → 视为最终答复，结束循环                     │
-    │ 4. 若命中的是终止工具（submit_review）→ 取出报告，结束循环          │
-    └─────────────────────────────────────────────────────────────────┘
-
-工程化设计（对应评审标准里的“Agent 架构”维度）：
-    * **单一职责**：循环只做编排；LLM 通信在 :mod:`codeguard.llm`，
-      工具实现在 :mod:`codeguard.tools`，事实提取在 :mod:`codeguard.static_analysis`。
-    * **可观测**：每一步记录成 :class:`AgentStep`，支持 ``--trace`` 输出完整轨迹。
-    * **可恢复**：工具报错不中断循环，而是回灌模型让它自我修正；LLM 永久失败时
-      降级为由静态分析结果合成部分报告，绝不空手而归。
-    * **有预算**：限制迭代轮数与工具调用总数，避免死循环与成本失控。
-    * **依赖倒置**：只依赖 :class:`~codeguard.llm.BaseLLMClient` 抽象，
-      因此能无缝替换为 Mock 客户端做离线测试。
+循环体刻意保持「薄」：每轮只做注入提示、调用模型、执行工具、判断收敛四件事，
+控制流完全显式，不藏在框架里。只依赖 BaseLLMClient 抽象，因此可换 Mock 客户端离线测试。
 """
 
 from __future__ import annotations
@@ -54,9 +34,7 @@ TERMINATION_TOOL = "submit_review"
 PRESCAN_FILE_LIMIT = 60
 
 
-# --------------------------------------------------------------------------- #
 # 步骤与结果
-# --------------------------------------------------------------------------- #
 @dataclass
 class AgentStep:
     """Agent 循环中的一步，用于可观测性与调试。"""
@@ -130,19 +108,9 @@ class AgentResult:
         return "\n".join(lines)
 
 
-# --------------------------------------------------------------------------- #
 # Agent
-# --------------------------------------------------------------------------- #
 class CodeReviewAgent:
-    """代码审查 Agent。
-
-    典型用法::
-
-        config = Config.from_env(api_key="sk-...")
-        agent = CodeReviewAgent(config)
-        result = agent.review("./src", focus=["SQL 注入"])
-        print(result.report.to_json())
-    """
+    """代码审查 Agent。典型用法：CodeReviewAgent(config).review('./src', focus=['SQL 注入'])"""
 
     def __init__(
         self,
@@ -152,13 +120,7 @@ class CodeReviewAgent:
         toolbox: Toolbox | None = None,
         extra_context: str = "",
     ) -> None:
-        """
-        Args:
-            config: 运行配置；``None`` 时从环境变量读取。
-            llm: 自定义 LLM 客户端（测试/扩展用）；``None`` 时按配置自动选择。
-            toolbox: 自定义工具箱；``None`` 时构建默认工具集。
-            extra_context: 追加到 System Prompt 之后的团队规范/项目背景。
-        """
+        """config 为 None 时从环境变量读取；llm/toolbox 为 None 时按配置自动构建。"""
         self.config = config or Config.from_env()
         self.config.validate(require_api_key=llm is None and not self.config.mock)
 
@@ -173,12 +135,7 @@ class CodeReviewAgent:
         self.llm: BaseLLMClient = llm or self._build_llm()
 
     def use_mock_llm(self, *, target: str = "") -> None:
-        """切换到离线 Mock 模型（用于 ``--mock`` 演示与测试）。
-
-        必须在工具箱构建之后调用，这样 Mock 才能拿到
-        :attr:`Toolbox.tool_state` 里静态分析的完整结构化结果 ——
-        工具消息文本可能被长度上限截断，无法再解析回 JSON。
-        """
+        """切换到离线 Mock 模型。必须在工具箱构建之后调用，否则拿不到 Toolbox.tool_state。"""
         self.llm = MockLLMClient(
             self.config,
             target=target or self.config.workspace_root or ".",
@@ -195,9 +152,7 @@ class CodeReviewAgent:
         #: 本次审查的目标路径（兜底报告需要它来补跑静态分析）
         self._review_target: Path | None = None
 
-    # ------------------------------------------------------------------ #
     # 构造辅助
-    # ------------------------------------------------------------------ #
     def _build_llm(self) -> BaseLLMClient:
         if self.config.mock:
             logger.info("使用离线 Mock 模型（不访问网络）")
@@ -220,9 +175,7 @@ class CodeReviewAgent:
     def __exit__(self, *exc_info: object) -> None:
         self.close()
 
-    # ------------------------------------------------------------------ #
     # 对外主入口
-    # ------------------------------------------------------------------ #
     def review(
         self,
         target: str | Path,
@@ -230,15 +183,9 @@ class CodeReviewAgent:
         focus: Sequence[str] | None = None,
         prescan: bool = True,
     ) -> AgentResult:
-        """对目标执行一次完整审查。
-
-        Args:
-            target: 要审查的文件或目录路径。
-            focus: 用户额外关注点。
-            prescan: 是否预扫描目录清单（减少模型盲探、节省 token）。
-
-        Returns:
-            :class:`AgentResult`，其中 ``report`` 为结构化报告。
+        """
+        对目标执行一次完整审查。
+        prescan 为 True 时预扫描目录清单（减少模型盲探、节省 token）。返回 AgentResult。
         """
         started = time.perf_counter()
         target_path = Path(target)
@@ -299,10 +246,7 @@ class CodeReviewAgent:
         )
 
     def followup(self, question: str, report: ReviewReport | None = None) -> str:
-        """基于已有上下文追问（对应“支持上下文记忆”要求）。
-
-        复用 ``review`` 留下的消息历史，因此模型记得之前看过哪些文件。
-        """
+        """基于已有消息历史追问（上下文记忆）。"""
         if not self._messages:
             self._messages.append(ChatMessage(role="system", content=system_prompt(self.config.lang)))
 
@@ -321,18 +265,11 @@ class CodeReviewAgent:
             self._execute_tool_calls(response.tool_calls)
         return self._messages[-1].content or "（达到追问迭代上限）"
 
-    # ------------------------------------------------------------------ #
     # 核心循环
-    # ------------------------------------------------------------------ #
     def _run_loop(self) -> tuple[ReviewReport, str, str]:
-        """执行 Agent 主循环。
-
-        循环体本身保持"薄"：每一轮只做四件事 —— 注入提示、调用模型、
-        执行工具、判断是否收敛。具体判定逻辑抽到下面几个小方法里，
-        以便这一段读起来就是一张流程图。
-
-        Returns:
-            ``(报告, 停止原因, 最终文本)``
+        """
+        执行 Agent 主循环，返回 (报告, 停止原因, 最终文本)。
+        具体判定逻辑抽到 _next_hint_kind / _budget_exhausted_report 等方法中。
         """
         self._iterations = 0
         self._tool_budget_used = 0
@@ -422,9 +359,7 @@ class CodeReviewAgent:
         ).strip()
         return report
 
-    # ------------------------------------------------------------------ #
     # LLM 交互
-    # ------------------------------------------------------------------ #
     def _call_llm(self) -> LLMResponse:
         """调用 LLM 并累计 token 用量。"""
         tools = self.registry.schemas()
@@ -445,14 +380,11 @@ class CodeReviewAgent:
             )
         )
 
-    # ------------------------------------------------------------------ #
     # 工具执行
-    # ------------------------------------------------------------------ #
     def _execute_tool_calls(self, tool_calls: Sequence[ToolCall]) -> int:
-        """执行一批工具调用，把每个结果作为 ``role=tool`` 消息回灌。
-
-        三种失败都不会中断循环，而是转成观察结果让模型自我修正：
-        参数非法 JSON、预算耗尽、工具执行异常。
+        """
+        执行一批工具调用，结果作为 role=tool 消息回灌。
+        参数非法 JSON、预算耗尽、工具异常三种失败均不中断循环，转为观察结果让模型自修正。
         """
         executed = 0
         for call in tool_calls:
@@ -517,15 +449,9 @@ class CodeReviewAgent:
             ChatMessage(role="tool", content=payload, tool_call_id=call.id, name=call.name)
         )
 
-    # ------------------------------------------------------------------ #
     # 静态分析兜底
-    # ------------------------------------------------------------------ #
     def _static_findings(self) -> list[Finding]:
-        """取回静态分析结果，用于与模型结论合并。
-
-        优先读工具箱的侧信道状态（完整、可靠）；若模型从未调用过该工具，
-        或侧信道不可用，则回退到解析历史里的工具消息文本。
-        """
+        """取回静态分析结果用于合并：优先读 Toolbox 侧信道，回退到解析工具消息文本。"""
         findings: list[Finding] = []
 
         state = self.toolbox.last_static_analysis
@@ -553,11 +479,9 @@ class CodeReviewAgent:
         return findings
 
     def _fallback_report(self, *, reason: str) -> ReviewReport:
-        """构建兜底报告：即使 LLM 失败，也让用户拿到静态分析结论。
-
-        若模型在循环中从未调用过 ``run_static_analysis``（例如一直卡在其他工具上、
-        或第一轮就网络失败），这里会**直接调用分析引擎**补一份结果，
-        保证"绝不空手而归"这一设计承诺在任何失败路径上都成立。
+        """
+        LLM 失败或预算耗尽时的兜底报告。
+        若模型从未调用过 run_static_analysis，则直接调用分析引擎补一份结果，保证不空手而归。
         """
         findings = self._static_findings()
         if not findings:
@@ -605,9 +529,7 @@ class CodeReviewAgent:
             )
         return relativize_findings(summary.findings, self.config.workspace_path)
 
-    # ------------------------------------------------------------------ #
     # 辅助
-    # ------------------------------------------------------------------ #
     def _reset(self) -> None:
         self._messages = []
         self._steps = []
@@ -618,11 +540,7 @@ class CodeReviewAgent:
         self.toolbox.clear()
 
     def _display(self, path: Path) -> str:
-        """转成相对工作区根的展示路径。
-
-        报告中统一使用相对路径：便于跨机器阅读、可安全公开（不泄露本机目录结构），
-        也让同一份报告在不同环境下可复现比较。工作区之外的路径退化为绝对路径。
-        """
+        """转成相对工作区根的展示路径（报告统一用相对路径，不泄露本机目录结构）。"""
         try:
             return path.resolve().relative_to(self.config.workspace_path).as_posix()
         except (ValueError, OSError):
@@ -675,9 +593,7 @@ class CodeReviewAgent:
         return seen
 
 
-# --------------------------------------------------------------------------- #
 # 无 LLM 的纯静态审查（便于快速自检与 CI）
-# --------------------------------------------------------------------------- #
 def _relative_display(raw_path: str, root: Path) -> str:
     """把路径转成相对 ``root`` 的展示形式（用于报告的''审查范围''一节）。"""
     try:
@@ -686,30 +602,44 @@ def _relative_display(raw_path: str, root: Path) -> str:
         return str(raw_path)
 
 
-def static_only_review(target: str | Path, *, workspace_root: str | Path | None = None) -> ReviewReport:
-    """不调用 LLM，直接用内置静态分析生成报告。
-
-    用途：
-        * 在没有 API Key 时快速自检；
-        * 作为 CI 中的确定性质量门禁；
-        * 作为 Agent 结果的对照基线。
+def static_only_review(
+    target: str | Path,
+    *,
+    workspace_root: str | Path | None = None,
+    rules: Sequence[str] | None = None,
+) -> ReviewReport:
     """
-    from codeguard.static_analysis import CodeAnalyzer, relativize_findings
+    不调用 LLM，直接用静态分析生成报告。
+    用于无 API Key 时自检、CI 质量门禁、以及作为 Agent 结果的对照基线。
+
+    rules 为只启用的规则 ID 列表（None 表示全部）；未知规则会抛异常而不是被静默忽略。
+    """
+    from codeguard.static_analysis import CodeAnalyzer, RULE_INDEX, relativize_findings
+
+    if rules:
+        unknown = [r for r in rules if r not in RULE_INDEX]
+        if unknown:
+            from codeguard.exceptions import ToolArgumentError
+
+            raise ToolArgumentError(
+                f"未知规则 ID：{', '.join(unknown)}。可用规则见 `python -m codeguard rules`。"
+            )
 
     root = Path(workspace_root).resolve() if workspace_root else Path.cwd().resolve()
     path = Path(target)
     if not path.is_absolute():
         path = root / path
 
-    summary = CodeAnalyzer().analyze_path(path)
+    summary = CodeAnalyzer(rules=rules).analyze_path(path)
+    scope = f"（仅启用 {len(rules)} 条规则：{', '.join(rules)}）" if rules else ""
     report = ReviewReport(
         summary=(
             f"内置静态分析完成：共分析 {len(summary.files)} 个文件，"
-            f"命中 {summary.total} 条问题。本报告由确定性规则生成，未调用 LLM。"
+            f"命中 {summary.total} 条问题{scope}。本报告由确定性规则生成，未调用 LLM。"
         ),
         findings=relativize_findings(summary.findings, root),
         files_reviewed=[_relative_display(f.path, root) for f in summary.files],
-        meta={"mode": "static-only", "counts": summary.counts},
+        meta={"mode": "static-only", "counts": summary.counts, "rules": list(rules or [])},
     )
     counts = report.counts_by_severity
     if counts[Severity.CRITICAL.value]:

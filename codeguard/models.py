@@ -1,11 +1,6 @@
-"""领域模型：审查发现、严重级别、审查报告、LLM 消息与用量统计。
-
-这些模型是 Agent 内部唯一的“事实来源”：
-    * 静态分析工具产出 :class:`Finding`；
-    * LLM 通过 ``submit_review`` 工具产出结构化 :class:`ReviewReport`；
-    * :mod:`codeguard.report` 把报告渲染成 Markdown / JSON。
-
-全部使用 ``dataclasses`` 而非 pydantic，保持零额外依赖。
+"""
+领域模型：审查发现、严重级别、审查报告、LLM 消息与用量统计。
+静态分析产出 Finding，LLM 经 submit_review 产出 ReviewReport，report 模块负责渲染。全部用 dataclasses 保持零依赖。
 """
 
 from __future__ import annotations
@@ -16,9 +11,7 @@ from datetime import datetime, timezone
 from enum import Enum
 from typing import Any, Iterable
 
-# --------------------------------------------------------------------------- #
 # 枚举
-# --------------------------------------------------------------------------- #
 
 
 class Severity(str, Enum):
@@ -90,9 +83,7 @@ SEVERITY_ORDER: dict[Severity, int] = {
 }
 
 
-# --------------------------------------------------------------------------- #
 # 发现
-# --------------------------------------------------------------------------- #
 @dataclass
 class Finding:
     """一条具体的代码问题。"""
@@ -135,11 +126,7 @@ class Finding:
 
     @classmethod
     def from_dict(cls, data: dict[str, Any], *, default_source: str = "llm") -> "Finding":
-        """从（可能是模型生成的）字典宽松构造。
-
-        模型输出的字段名不一定稳定，因此这里显式列出中英文别名，
-        任何缺失字段都会退化为空值而不是抛异常 —— 健壮性优先。
-        """
+        """从（可能是模型生成的）字典宽松构造：显式列出中英文别名，缺失字段退化为空值而不抛异常。"""
         if not isinstance(data, dict):
             return cls(title=str(data), source=default_source)
 
@@ -183,9 +170,7 @@ class Finding:
         return data
 
 
-# --------------------------------------------------------------------------- #
 # 报告
-# --------------------------------------------------------------------------- #
 @dataclass
 class ReviewReport:
     """一次代码审查的最终产出。"""
@@ -205,7 +190,6 @@ class ReviewReport:
     #: 报告生成时间（UTC，ISO 8601）
     generated_at: str = field(default_factory=lambda: datetime.now(timezone.utc).isoformat(timespec="seconds"))
 
-    # ------------------------------------------------------------------ #
     @classmethod
     def from_payload(cls, payload: dict[str, Any]) -> "ReviewReport":
         """从 ``submit_review`` 工具参数构造报告。"""
@@ -247,12 +231,8 @@ class ReviewReport:
             open_questions=str_list("open_questions", "questions", "待确认问题"),
         )
 
-    # ------------------------------------------------------------------ #
     def merge_findings(self, findings: Iterable[Finding], *, dedupe: bool = True) -> int:
-        """合并外部发现（通常是静态分析结果），返回新增条数。
-
-        去重键为 ``(file, line, 归一化标题)``，避免静态分析与模型重复报同一条问题。
-        """
+        """合并外部发现（通常是静态分析结果），返回新增条数。去重键为 (file, line, 归一化标题)。"""
         if not dedupe:
             merged = list(findings)
             self.findings.extend(merged)
@@ -275,7 +255,6 @@ class ReviewReport:
         title = "".join(ch for ch in finding.title.lower() if ch.isalnum() or "\u4e00" <= ch <= "\u9fff")
         return (finding.file, finding.line, title[:24])
 
-    # ------------------------------------------------------------------ #
     @property
     def counts_by_severity(self) -> dict[str, int]:
         counts = {sev.value: 0 for sev in Severity}
@@ -305,9 +284,7 @@ class ReviewReport:
         return json.dumps(self.to_dict(), ensure_ascii=False, indent=indent)
 
 
-# --------------------------------------------------------------------------- #
 # LLM 消息与用量
-# --------------------------------------------------------------------------- #
 @dataclass
 class ToolCall:
     """模型请求的一次工具调用。"""
@@ -332,10 +309,7 @@ class ToolCall:
 
 @dataclass
 class ChatMessage:
-    """与 OpenAI ``/chat/completions`` 协议对齐的消息。
-
-    ``to_payload`` 只输出协议需要的字段，保证请求体最小且合法。
-    """
+    """与 OpenAI /chat/completions 协议对齐的消息。to_payload 只输出协议需要的字段。"""
 
     role: str
     content: str | None = None

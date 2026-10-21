@@ -1,16 +1,6 @@
-"""零依赖测试运行器：不安装 pytest 也能跑完整测试套件。
-
-用法::
-
-    python run_tests.py            # 运行 tests/ 下全部用例
-    python run_tests.py -v         # 显示每个用例名
-    python run_tests.py test_agent # 只跑名字包含该关键字的文件
-
-测试用例写成 ``test_xxx()`` 形式的普通函数（同时兼容 pytest），
-本运行器负责发现、执行、统计与报告失败堆栈。
-
-之所以自带运行器：作业运行环境不一定装得上 pytest，
-而"能否一条命令跑通测试"直接影响可维护性评分。
+"""
+零依赖测试运行器：不装 pytest 也能跑完整测试套件。
+用法：python run_tests.py [-v] [关键字]。用例写成 test_xxx() 普通函数（兼容 pytest），本运行器负责发现、执行与报告。
 """
 
 from __future__ import annotations

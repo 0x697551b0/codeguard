@@ -1,12 +1,6 @@
-"""LLM 客户端测试。
-
-使用 ``httpx.MockTransport`` 注入伪造响应，**完全不访问网络**，覆盖：
-    * 正常响应解析（content / tool_calls / usage）
-    * 工具调用参数非法 JSON 时的容错
-    * HTTP 429 / 500 的退避重试与最终成功
-    * 401 鉴权失败不重试（快速失败）
-    * 响应结构异常的错误提示
-    * 端点 URL 拼接
+"""
+LLM 客户端测试，用 httpx.MockTransport 注入伪造响应，完全不访问网络。
+覆盖：响应解析、工具参数非法 JSON 容错、429/500 退避重试、401 不重试、结构异常报错、端点 URL 拼接。
 """
 
 from __future__ import annotations

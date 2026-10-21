@@ -41,6 +41,7 @@ CodeGuard 是一个能自己决定"看哪些文件、跑哪些检查"的代码�
 - [快速开始](#快速开始)
 - [效果预览](#效果预览)
 - [命令行用法](#命令行用法)
+- [**使用方法（详细）**](使用方法.md) —— 全部命令、参数、示例与 CI 接入
 - [项目结构](#项目结构)
 - [架构设计](#架构设计)
 - [内置工具](#内置工具)
@@ -247,6 +248,7 @@ codeguard/
 │   ├── verify_repo.py              # 用标准库解码 .git 对象，校验仓库完整性
 │   └── make_backup.py              # 打包“学号姓名.zip”备份提交物
 ├── Design.md                       # ★ 设计文档（架构 / 模式 / 取舍）
+├── 使用方法.md                      # 完整使用说明（命令、参数、示例、CI 接入）
 ├── README.md                       # 本文件
 ├── run_tests.py                    # 零依赖测试运行器（无需 pytest）
 ├── verify.py                       # 端到端自检脚本
@@ -534,6 +536,7 @@ Agent 闭环；`python verify.py` 可一键验证全部功能。真实模型的�
 ## 相关文档
 
 - [`Design.md`](Design.md) —— 详细设计文档（架构、设计模式、Agent 循环、失败处理）
+- [`使用方法.md`](使用方法.md) —— 完整使用说明（命令、参数、示例、CI 接入）
 - [`docs/RULES.md`](docs/RULES.md) —— 内置规则手册（27 条）
 - [`docs/PROMPT_DESIGN.md`](docs/PROMPT_DESIGN.md) —— Prompt 设计说明
 - [`examples/sample_report.md`](examples/sample_report.md) —— 示例审查报告

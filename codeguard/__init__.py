@@ -1,14 +1,6 @@
-"""CodeGuard —— 基于 LLM 工具调用的代码审查 Agent。
-
-本包实现作业要求的最小 Agent 闭环：
-
-    输入(Input) → 推理(Reasoning) → 工具调用(Tool Calling) → 观察(Observation) → 输出(Output)
-
-对外主要入口：
-    * :class:`codeguard.agent.CodeReviewAgent` —— Agent 主循环
-    * :class:`codeguard.llm.LLMClient`         —— LLM 调用与重试
-    * :class:`codeguard.tools.ToolRegistry`    —— 工具注册表
-    * :func:`codeguard.cli.main`               —— 命令行入口
+"""
+CodeGuard —— 基于 LLM 工具调用的代码审查 Agent。
+实现 Agent 闭环：输入 → 推理 → 工具调用 → 观察 → 输出。对外入口见下方 __all__。
 """
 
 from codeguard.agent import AgentResult, CodeReviewAgent

@@ -1,13 +1,6 @@
-"""Agent 循环测试（离线，不访问网络）。
-
-覆盖：
-    * 完整闭环：推理 → 工具调用 → 观察 → 提交报告
-    * 终止工具 ``submit_review`` 能正确结束循环并取出报告
-    * 模型不查资料就想下结论时被动态提示拉回
-    * 工具报错不中断循环，而是回灌模型自愈
-    * 工具参数非法 JSON 的容错
-    * 达到迭代上限时由静态分析兜底合成报告（绝不空手而归）
-    * 纯静态审查模式与上下文记忆（followup）
+"""
+Agent 循环测试（离线，不访问网络）。
+覆盖：完整闭环、submit_review 终止、未用工具时被提示拉回、工具报错回灌自愈、参数非法 JSON 容错、预算耗尽兜底、上下文记忆。
 """
 
 from __future__ import annotations
@@ -280,6 +273,30 @@ def test_static_only_review_without_llm() -> None:
         assert "CG105" in rule_ids
         assert report.overall_risk == "critical"
         assert report.files_reviewed
+
+
+def test_static_only_review_honours_rules_filter() -> None:
+    """回归：--rules 曾只被解析、从不传给分析引擎（文档写了但静默失效）。"""
+    with Workspace() as workspace:
+        only_eval = static_only_review("app.py", workspace_root=workspace.root, rules=["CG101"])
+        assert {f.rule_id for f in only_eval.findings} == {"CG101"}, "只应保留 CG101"
+        assert only_eval.meta["rules"] == ["CG101"]
+
+        # 全量结果应比过滤后更多，证明过滤真的生效了
+        everything = static_only_review("app.py", workspace_root=workspace.root)
+        assert len(everything.findings) > len(only_eval.findings)
+
+
+def test_static_only_review_rejects_unknown_rule() -> None:
+    from codeguard.exceptions import ToolArgumentError
+
+    with Workspace() as workspace:
+        try:
+            static_only_review("app.py", workspace_root=workspace.root, rules=["CG999"])
+        except ToolArgumentError as exc:
+            assert "CG999" in str(exc)
+        else:  # pragma: no cover
+            raise AssertionError("未知规则应报错，而不是静默忽略")
 
 
 def test_agent_result_trace_is_renderable() -> None:
